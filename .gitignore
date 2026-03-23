@@ -35,9 +35,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Auth credentials (shared out-of-band, never committed)
-/auth/
-
 # Zoho CRM raw JSON (debugging only; deals.xlsx is committed instead)
 src/data/zoho-deals.json
 src/data/zoho-accounts.json

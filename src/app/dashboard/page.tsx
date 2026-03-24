@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, Fragment } from "react";
 import { useSalesData } from "@/lib/use-sales-data";
 import { formatINR, formatINRCompact, formatINRFull, formatPercent, formatMultiplier } from "@/lib/format";
 import { KpiCard } from "@/components/kpi-card";
@@ -158,6 +158,7 @@ export default function SalesDashboardPage() {
 	const [repSortDir, setRepSortDir] = useState<SortDir>("desc");
 	const [sourceSortField, setSourceSortField] = useState<string>("totalValue");
 	const [sourceSortDir, setSourceSortDir] = useState<SortDir>("desc");
+	const [expandedMovementReps, setExpandedMovementReps] = useState<Set<string>>(new Set());
 
 	const pipeline = data?.pipeline;
 	const deals = useMemo(() => pipeline?.deals || [], [pipeline]);
@@ -854,6 +855,95 @@ export default function SalesDashboardPage() {
 					</div>
 				</CardContent>
 			</Card>
+
+			{/* ---------- Recent Deal Movement ---------- */}
+			{pipeline?.dailyDealMovement && pipeline.dailyDealMovement.length > 0 && (
+				<Card>
+					<CardHeader className="pb-3">
+						<CardTitle className="text-base font-semibold">Recent Deal Movement (Last 7 Days)</CardTitle>
+					</CardHeader>
+					<CardContent className="p-0">
+						<div className="overflow-x-auto">
+							<table className="w-full text-left text-sm">
+								<thead>
+									<tr className="border-b border-slate-200 bg-slate-50">
+										<th className="px-4 py-2 font-medium text-muted-foreground">Rep</th>
+										<th className="px-3 py-2 font-medium text-muted-foreground text-right">New Deals</th>
+										<th className="px-3 py-2 font-medium text-muted-foreground text-right">New Pipeline</th>
+										<th className="px-3 py-2 font-medium text-muted-foreground text-right">Updated Deals</th>
+										<th className="px-3 py-2 font-medium text-muted-foreground text-right">Updated Value</th>
+										<th className="px-3 py-2 font-medium text-muted-foreground text-right">Total Value</th>
+									</tr>
+								</thead>
+								<tbody>
+									{pipeline.dailyDealMovement.map((day) => {
+										const dateObj = new Date(day.date + "T00:00:00");
+										const dateLabel = dateObj.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+										return (
+											<Fragment key={day.date}>
+												<tr className="bg-slate-100 border-t border-slate-200">
+													<td colSpan={6} className="px-4 py-2 font-semibold text-slate-700">{dateLabel}</td>
+												</tr>
+												{day.reps.map((rep, ri) => {
+													const repKey = `${day.date}-${rep.owner}`;
+													const isExpanded = expandedMovementReps.has(repKey);
+													const totalValue = rep.created.value + rep.modified.value;
+													return (
+														<Fragment key={repKey}>
+															<tr
+																className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 ${ri % 2 === 0 ? "bg-white" : "bg-gray-50"}`}
+																onClick={() => {
+																	setExpandedMovementReps((prev) => {
+																		const next = new Set(prev);
+																		if (next.has(repKey)) next.delete(repKey);
+																		else next.add(repKey);
+																		return next;
+																	});
+																}}
+															>
+																<td className="px-4 py-1.5 font-medium">
+																	<span className="flex items-center gap-1.5">
+																		<span className="text-xs text-muted-foreground">{isExpanded ? "▼" : "▶"}</span>
+																		{rep.owner}
+																	</span>
+																</td>
+																<td className="px-3 py-1.5 text-right tabular-nums">{rep.created.count || "-"}</td>
+																<td className="px-3 py-1.5 text-right tabular-nums">{rep.created.value > 0 ? formatINR(rep.created.value) : "-"}</td>
+																<td className="px-3 py-1.5 text-right tabular-nums">{rep.modified.count || "-"}</td>
+																<td className="px-3 py-1.5 text-right tabular-nums">{rep.modified.value > 0 ? formatINR(rep.modified.value) : "-"}</td>
+																<td className="px-3 py-1.5 text-right tabular-nums font-medium">{formatINR(totalValue)}</td>
+															</tr>
+															{isExpanded && rep.deals.map((deal, di) => (
+																<tr key={`${repKey}-${di}`} className="bg-slate-50/50 border-b border-slate-100">
+																	<td className="pl-10 pr-3 py-1 text-xs text-muted-foreground" colSpan={2}>
+																		<span className="flex items-center gap-2">
+																			<Badge variant="outline" className={deal.movementType === "created" ? "bg-green-100 text-green-700 border-green-200 text-[10px] px-1.5 py-0" : "bg-blue-100 text-blue-700 border-blue-200 text-[10px] px-1.5 py-0"}>
+																				{deal.movementType === "created" ? "New" : "Updated"}
+																			</Badge>
+																			<span className="text-slate-700">{deal.dealName}</span>
+																		</span>
+																	</td>
+																	<td className="px-3 py-1 text-xs text-muted-foreground">{deal.accountName}</td>
+																	<td className="px-3 py-1 text-xs text-right tabular-nums">{formatINR(deal.amount)}</td>
+																	<td className="px-3 py-1 text-xs" colSpan={2}>
+																		<Badge variant="outline" className={getStageBadgeStyle(deal.stage) + " text-[10px] px-1.5 py-0"}>
+																			{deal.stage}
+																		</Badge>
+																	</td>
+																</tr>
+															))}
+														</Fragment>
+													);
+												})}
+											</Fragment>
+										);
+									})}
+								</tbody>
+							</table>
+						</div>
+					</CardContent>
+				</Card>
+			)}
 		</div>
 	);
 }

@@ -133,6 +133,29 @@ export type SalesTimeSeriesPoint = {
 	dealCount: number;
 };
 
+export type DealMovement = {
+	date: string;
+	dealName: string;
+	accountName: string;
+	amount: number;
+	stage: string;
+	forecastCategory: ForecastCategory;
+	owner: string;
+	movementType: "created" | "modified";
+};
+
+export type RepDailyMovement = {
+	owner: string;
+	created: { count: number; value: number };
+	modified: { count: number; value: number };
+	deals: DealMovement[];
+};
+
+export type DailyDealMovement = {
+	date: string;
+	reps: RepDailyMovement[];
+};
+
 export type PipelineData = {
 	deals: ZohoDeal[];
 	kpis: ZohoPipelineKpis;
@@ -145,9 +168,21 @@ export type PipelineData = {
 	quarterlyForecast: QuarterlyForecast[];
 	funnel: FunnelStage[];
 	salesTimeSeries: SalesTimeSeriesPoint[];
+	dailyDealMovement: DailyDealMovement[];
+};
+
+export type TimeFilterOption = {
+	key: string;
+	label: string;
+};
+
+export type AvailableTimeFilters = {
+	quarters: TimeFilterOption[];
+	fiscalYears: TimeFilterOption[];
 };
 
 export type SalesDashboardData = {
 	pipeline: PipelineData | null;
+	availableTimeFilters?: AvailableTimeFilters;
 	refreshedAt?: RefreshTimestamps;
 };

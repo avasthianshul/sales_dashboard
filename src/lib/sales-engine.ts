@@ -15,6 +15,11 @@ import type {
 	PipelineTimeSeriesPoint,
 	PipelineData,
 	SalesDashboardData,
+	AvailableTimeFilters,
+	TimeFilterOption,
+	DealMovement,
+	RepDailyMovement,
+	DailyDealMovement,
 } from "./types";
 import { readZohoDeals } from "./zoho-parser";
 
@@ -527,6 +532,67 @@ export function computePipelineTimeSeries(deals: ZohoDeal[], period: TimePeriod)
 	}));
 }
 
+export function computeDailyDealMovement(deals: ZohoDeal[], days: number = 7): DailyDealMovement[] {
+	const now = new Date();
+	const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+	const cutoffISO = cutoff.toISOString();
+
+	const movements: DealMovement[] = [];
+
+	for (const deal of deals) {
+		const createdInWindow = deal.createdTime && deal.createdTime >= cutoffISO;
+		const modifiedInWindow = deal.modifiedTime && deal.modifiedTime >= cutoffISO;
+
+		if (!createdInWindow && !modifiedInWindow) continue;
+
+		// If created in window, classify as "created"; otherwise "modified"
+		const movementType: "created" | "modified" = createdInWindow ? "created" : "modified";
+		const relevantTime = createdInWindow ? deal.createdTime : deal.modifiedTime;
+		const date = relevantTime.substring(0, 10); // YYYY-MM-DD
+
+		movements.push({
+			date,
+			dealName: deal.dealName,
+			accountName: deal.accountName,
+			amount: deal.amount,
+			stage: deal.stage,
+			forecastCategory: getForecastCategory(deal.stage),
+			owner: deal.owner || "Unknown",
+			movementType,
+		});
+	}
+
+	// Group by date, then by owner
+	const dateMap = new Map<string, Map<string, DealMovement[]>>();
+	for (const m of movements) {
+		if (!dateMap.has(m.date)) dateMap.set(m.date, new Map());
+		const ownerMap = dateMap.get(m.date)!;
+		if (!ownerMap.has(m.owner)) ownerMap.set(m.owner, []);
+		ownerMap.get(m.owner)!.push(m);
+	}
+
+	// Build result sorted by date descending
+	const result: DailyDealMovement[] = Array.from(dateMap.entries())
+		.sort(([a], [b]) => b.localeCompare(a))
+		.map(([date, ownerMap]) => {
+			const reps: RepDailyMovement[] = Array.from(ownerMap.entries())
+				.map(([owner, deals]) => {
+					const created = deals.filter((d) => d.movementType === "created");
+					const modified = deals.filter((d) => d.movementType === "modified");
+					return {
+						owner,
+						created: { count: created.length, value: created.reduce((s, d) => s + d.amount, 0) },
+						modified: { count: modified.length, value: modified.reduce((s, d) => s + d.amount, 0) },
+						deals: deals.sort((a, b) => b.amount - a.amount),
+					};
+				})
+				.sort((a, b) => (b.created.value + b.modified.value) - (a.created.value + a.modified.value));
+			return { date, reps };
+		});
+
+	return result;
+}
+
 export function computePipelineData(deals: ZohoDeal[], period: TimePeriod): PipelineData {
 	const wonDeals = deals.filter((d) => isWon(d.stage));
 	const lostDeals = deals.filter((d) => isLost(d.stage));
@@ -571,20 +637,65 @@ export function computePipelineData(deals: ZohoDeal[], period: TimePeriod): Pipe
 	const quarterlyForecast = computeQuarterlyForecast(deals);
 	const funnel = computeSalesFunnel(deals);
 	const salesTimeSeries = computeSalesTimeSeries(deals, period);
+	const dailyDealMovement = computeDailyDealMovement(deals);
 
-	return { deals, kpis, stageDistribution, timeSeries, salesKpis, lostDealBreakdown, repPerformance, leadSourceMetrics, quarterlyForecast, funnel, salesTimeSeries };
+	return { deals, kpis, stageDistribution, timeSeries, salesKpis, lostDealBreakdown, repPerformance, leadSourceMetrics, quarterlyForecast, funnel, salesTimeSeries, dailyDealMovement };
 }
 
-export function getSalesDashboardData(period: TimePeriod): SalesDashboardData {
+function computeAvailableTimeFilters(deals: ZohoDeal[]): AvailableTimeFilters {
+	const quarterSet = new Map<string, string>();
+	const fySet = new Map<string, string>();
+
+	for (const deal of deals) {
+		if (!deal.closingDate) continue;
+		const qKey = getQuarterKey(deal.closingDate);
+		if (!quarterSet.has(qKey)) {
+			quarterSet.set(qKey, getPeriodLabel(qKey, "quarterly"));
+		}
+		const fyKey = getFYKey(deal.closingDate);
+		if (!fySet.has(fyKey)) {
+			fySet.set(fyKey, getPeriodLabel(fyKey, "annual"));
+		}
+	}
+
+	const quarters: TimeFilterOption[] = Array.from(quarterSet.entries())
+		.map(([key, label]) => ({ key, label }))
+		.sort((a, b) => a.key.localeCompare(b.key));
+
+	const fiscalYears: TimeFilterOption[] = Array.from(fySet.entries())
+		.map(([key, label]) => ({ key, label }))
+		.sort((a, b) => a.key.localeCompare(b.key));
+
+	return { quarters, fiscalYears };
+}
+
+function filterDealsByTimeFilter(deals: ZohoDeal[], timeFilter: string): ZohoDeal[] {
+	if (timeFilter === "all") return deals;
+
+	return deals.filter((deal) => {
+		if (!deal.closingDate) return false;
+		// Quarter filter: key like "2025-Q1"
+		if (timeFilter.includes("-Q")) {
+			return getQuarterKey(deal.closingDate) === timeFilter;
+		}
+		// FY filter: key like "2025"
+		return getFYKey(deal.closingDate) === timeFilter;
+	});
+}
+
+export function getSalesDashboardData(period: TimePeriod, timeFilter: string = "all"): SalesDashboardData {
 	let pipeline: PipelineData | null = null;
+	let availableTimeFilters: AvailableTimeFilters | undefined;
 	try {
-		const deals = readZohoDeals();
-		if (deals) {
+		const allDeals = readZohoDeals();
+		if (allDeals) {
+			availableTimeFilters = computeAvailableTimeFilters(allDeals);
+			const deals = filterDealsByTimeFilter(allDeals, timeFilter);
 			pipeline = computePipelineData(deals, period);
 		}
 	} catch (e) {
 		console.error("Failed to load Zoho data:", e);
 	}
 
-	return { pipeline };
+	return { pipeline, availableTimeFilters };
 }

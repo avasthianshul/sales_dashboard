@@ -6,9 +6,10 @@ import type { TimePeriod } from "@/lib/types";
 export async function GET(request: NextRequest) {
 	const searchParams = request.nextUrl.searchParams;
 	const period = (searchParams.get("period") || "monthly") as TimePeriod;
+	const timeFilter = searchParams.get("timeFilter") || "all";
 
 	try {
-		const data = getSalesDashboardData(period);
+		const data = getSalesDashboardData(period, timeFilter);
 		const ts = getRefreshTimestamps();
 		return NextResponse.json({
 			...data,
